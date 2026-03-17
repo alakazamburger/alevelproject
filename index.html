@@ -5,9 +5,17 @@
     <link rel="stylesheet" href="halfbox.css">
   </head>
   <body onresize="resizedWindow()">
-    <canvas id="mainCanvas"></canvas>
-    <canvas id="topCanvas"></canvas>
-    <canvas id="cursorCanvas"></canvas>
-    <script src="sempu.js"></script>
-  </body>
+  <canvas class="centred" id="mainCanvas"></canvas>
+  <canvas class="centred" id="topCanvas"></canvas>
+  <canvas class="centred" id="cursorCanvas"></canvas>
+  <div id="menu">
+    <button type="submit" class="menuButton" id="play" onclick="startGame()">🍔</button>
+    <br>
+    <button type="submit" class="menuButton" id="levelSelect" onclick="levelSelectScreen()">🔢</button>
+    <br>
+    <button type="submit" class="menuButton" id="settings" onclick="settingsScreen()">⚙️</button>
+    <br>
+    <button type="submit" class="menuButton" id="quit" onclick="quitGame()">🚪</button>
+  </div>
+</body>
 </html>
