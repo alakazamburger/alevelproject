@@ -1,4 +1,4 @@
-#mainCanvas, #topCanvas, #cursorCanvas {
+.centred {
   position: absolute;
   left: 50%;
   top: 50%;
@@ -8,6 +8,31 @@
 
 #mainCanvas {
   background-color: #000000;
+}
+
+#menu {
+  display: table;
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 100%;
+  text-align: center;
+}
+
+.menuButton {
+  display: table-cell;
+  vertical-align: middle;
+  background-color: #FFDEA2;
+  position: relative;
+  top: 15%;
+  width: 30%;
+  border: 3px solid #19296F;
+  border-radius: 5px;
+  padding: 15px;
+  margin: 4px 2px;
+  font-size: 20px;
+  cursor: pointer;
 }
 
 .cursorHideClass {
