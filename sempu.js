@@ -7,10 +7,11 @@ const cursorCtx = cursorCanvas.getContext('2d')
 const GLOBWIDTH = 16 // change these if necessary
 const GLOBHEIGHT = 9 // change these if necessary
 var level = 0 // will increment as the game is played
+var moveCount = 0 // will increment as a level is played
 
 
 function getSrc(code) {
-  const filePath = "images/"
+  const filePath = "https://raw.githubusercontent.com/alakazamburger/sokoburger/refs/heads/main/images/"
   const srcs = {
     // floors
     "--": "floors/floor1",
@@ -29,7 +30,10 @@ function getSrc(code) {
     "3a": "icons/bottombunv2",
     "3b": "icons/pattyv2",
     "3c": "icons/topbunv2",
-    "04": "icons/plate"
+    "4a": "icons/cheese",
+    "05": "icons/plate",
+    "98": "icons/shadow",
+    "99": "icons/fork"
   }
   
   if (typeof code === "string") { // passed a code
@@ -58,7 +62,10 @@ asset key:
 1e-1h - wall bumps 1-4
 02    - crate
 3a-3c - burger parts (bottom to top)
-04    - plate
+4a-?? - ingredients (ordered chronologically from when they were added to the game)
+05    - plate
+98    - shadow
+99    - fork
 */
 
 // preload assets
@@ -66,7 +73,8 @@ const imageObjects = {} // will fill with all the relevant keys and Image() obje
 
 function preloadAssets(callback) {
   const urlArr = getSrc(true) // returns all file paths
-  urlArr.push("images/icons/fork.png") // add in the cursor image, so literally every image is in the imageObjects dictionary
+  // urlArr.push("the new one")
+  // add in the cursor and selected images, so literally every image is in the imageObjects dictionary
 
   var loaded = 0
   
@@ -119,7 +127,10 @@ function resizedWindow() {
   w = Math.floor(w/gw)*gw
   h = Math.floor(h/gh)*gh
   
-  // actually set them
+  // actually set it
+  const mainDiv = document.getElementById("gameWindow")
+  mainDiv.width = w
+  mainDiv.height = h
   canvas.width = w
   canvas.height = h
   topCanvas.width = w
@@ -127,14 +138,12 @@ function resizedWindow() {
   cursorCanvas.width = w
   cursorCanvas.height = h
   
-  // put the menu in the same place
-  const menu = document.getElementById("menu")
-  var mw = w/window.innerWidth*100
-  var mh = h/window.innerHeight*100
-  menu.style.left = `${(100-mw)/2}%`
-  menu.style.top = `${(100-mh)/2}%`
-  menu.style.width = `${mw}%`
-  menu.style.height = `${mh}%`
+  // same for the menu
+  const menuDiv = document.getElementById("menu")
+  var mw = w*0.8
+  var mh = h*0.7
+  menuDiv.style.width = `${mw}px`
+  menuDiv.style.height = `${mh}px`
   
   // update the global variables
   cwidth = w
@@ -183,64 +192,10 @@ var plateInfo
 var targetStack
 
 
-var mouse = {} // e.g. mouse = {x: 12, y: 34, offset: {x: 56, y: 78}}
-
-function checkIfObstructed(prevPos, pos) {
-  var isTouching = false
-  
-  // find pos in terms of canvas
-  var wOffset = 0.5*(window.innerWidth-cwidth)
-  var hOffset = 0.5*(window.innerHeight-cheight)
-  var badCPos = { // c for canvas, bad because calculating cursor pos not fork pos
-    x: pos.x - wOffset,
-    y: pos.y - hOffset
-  }
-  var realCPos = { // accounts for offset
-    x: badCPos.x - mouse.offset.x,
-    y: badCPos.y - mouse.offset.y
-  }
-  
-  // set to true if out of bounds
-  if (realCPos.x < 0 || realCPos.y < 0 || realCPos.x > cwidth || realCPos.y > cheight) {
-    isTouching = true
-    
-  } else {
-    // actual tile mouse is on
-    var xTPos = Math.floor(realCPos.x/twidth)
-    var yTPos = Math.floor(realCPos.y/theight)
-
-    // check if there's a wall/item on this tile
-    var tileLocation = yTPos*GLOBWIDTH + xTPos
-    var maybeWall = levelArrs[level][tileLocation]
-    var maybeItem = iconLayer[tileLocation]
-
-    const wallCodes = ["01","1e","1f","1g","1h"]
-    const itemCodes = ["02","3a","3b","3c"]
-
-    if (wallCodes.includes(maybeWall)) isTouching = true
-    if (itemCodes.includes(maybeItem)) isTouching = true
-  }
-  
-  if (isTouching) {
-    var newOffset = {
-      x: pos.x - prevPos.x,
-      y: pos.y - prevPos.y
-    }
-    mouse.offset.x += newOffset.x
-    mouse.offset.y += newOffset.y
-  }
-}
+var mouse = {} // e.g. mouse = {x: 12, y: 34}
 
 document.addEventListener("mousemove", (e) => {
-  if (heldItem) {
-    var prevMouse = {x: mouse.x, y: mouse.y, offset: mouse.offset}
-    mouse.x = e.clientX
-    mouse.y = e.clientY
-    checkIfObstructed(prevMouse, mouse) // function modifies offset if necessary
-  } else {
-    mouse = {x: e.clientX, y: e.clientY, offset: {x: 0, y: 0}} // reset offset as no item is held
-  }
-  
+  mouse = {x: e.clientX, y: e.clientY}
   renderCursorLayer()
 })
 
@@ -248,7 +203,76 @@ document.addEventListener("mousemove", (e) => {
 
 var heldItem = false // if held, heldItem = {code: "abc", tilePos: 123}
 
-document.addEventListener("mousedown", (e) => {  
+function canDropCheck() {
+  if (heldItem) {
+    
+    var tileLocation = heldItem.tilePos
+
+    // check if this tile is free on the BASE layer
+    var tileInQuestion = levelArrs[level][tileLocation]
+
+    // check for a plate being underneath
+    if (tileInQuestion === "05") {
+      if (targetStack.peek() == heldItem.code) {
+        targetStack.pop()
+        plateInfo.list.push(heldItem.code)
+        if (plateInfo.tilePos == -1) {
+          plateInfo.tilePos = tileLocation
+        }
+        iconLayer[tileLocation] = "--"
+
+        // check for level being complete
+        if (targetStack.peek() == "stack empty") {
+          // console.log(moveCount)
+          changeLevel()
+        }
+
+        heldItem = false
+        renderIconLayer()
+        renderCursorLayer()
+      } else {
+        return // it couldnt be dropped on the plate (so nothing needs to change)
+      }
+    }
+
+
+    // to account for inner rounded corners / round tiles
+    const emptyEnoughTiles = ["1a","1b","1c","1d"]
+    const roundEnoughItems = ["3a","3b","3c"]
+    const burgerParts = ["3a","3b","3c","4a"]
+
+    // subsequent logic  
+    var canDropItem = true // the only other case is its on a blank tile, which is fine to drop onto
+
+    if (emptyEnoughTiles.includes(tileInQuestion)) {
+      canDropItem = (roundEnoughItems.includes(heldItem.code))
+    }
+    
+    return canDropItem // either true or false
+    
+  } else {
+    return false // no held item
+  }
+}
+
+document.addEventListener("click", (e) => {
+  // if something is already held
+  if (heldItem) {
+    var canDrop = canDropCheck()
+
+    // final if statement, where its either dropped or not dropped:
+    if (canDrop == true) {
+
+      // reset heldItem (item officially dropped)
+      heldItem = false
+      renderIconLayer()
+      renderCursorLayer()
+
+    } else {
+      return
+    }
+  }
+  
   // find pos in terms of canvas
   var wOffset = 0.5*(window.innerWidth-cwidth)
   var hOffset = 0.5*(window.innerHeight-cheight)
@@ -270,94 +294,58 @@ document.addEventListener("mousedown", (e) => {
   heldItem = {code: maybeItem, tilePos: tileLocation}
   
   // mark the item as blank on the icon layer
-  iconLayer[tileLocation] = "--"
+  // iconLayer[tileLocation] = "--"
   // subsequently refresh the icon and cursor layer, to essentially transfer the icon
   renderIconLayer()
   renderCursorLayer()
 })
 
-document.addEventListener("mouseup", (e) => {
-  // if nothing was picked up
-  if (!heldItem) return
+function wasdPressed(offset) {
+  var oldTileLocation = heldItem.tilePos
+  var newTileLocation = heldItem.tilePos + offset
+  if (newTileLocation < 0 || newTileLocation > GLOBWIDTH*GLOBHEIGHT) return
   
-  // find pos in terms of canvas
-  var wOffset = 0.5*(window.innerWidth-cwidth)
-  var hOffset = 0.5*(window.innerHeight-cheight)
-  var badMPos = {
-    x: mouse.x - wOffset,
-    y: mouse.y - hOffset
-  }
-  var realMPos = { // measure fork not cursor
-    x: badMPos.x - mouse.offset.x,
-    y: badMPos.y - mouse.offset.y
-  }
-  
-  // return if out of bounds
-  if (realMPos.x < 0 || realMPos.y < 0 || realMPos.x > cwidth || realMPos.y > cheight) return
-  
-  // actual tile left click was let go of on
-  var xTPos = Math.floor(realMPos.x/twidth)
-  var yTPos = Math.floor(realMPos.y/theight)
-  
-  
+  // check if this tile is free on the ICON layer
+  var maybeFreeTile = iconLayer[newTileLocation]
+  var iconLayerFree = (maybeFreeTile == "--")
   
   // check if this tile is free on the BASE layer
-  var newTileLocation = yTPos*GLOBWIDTH + xTPos
-  var maybeFreeTile = levelArrs[level][newTileLocation]
+  maybeFreeTile = levelArrs[level][newTileLocation]
   
-  // to account for inner rounded corners / round tiles
-  const emptyEnoughTiles = ["1a","1b","1c","1d"]
-  const roundEnoughItems = ["3a","3b","3c"]
-  const burgerParts = ["3a","3b","3c"]
+  // all empty tiles, including corner tiles
+  const emptyTiles = ["--", "1a","1b","1c","1d"]
   
   // subsequent logic
   var baseLayerFree
-  if (emptyEnoughTiles.includes(maybeFreeTile)) {
-    baseLayerFree = (roundEnoughItems.includes(heldItem.code))
-    
-  } else if (maybeFreeTile == "04") { // dropped on a plate
-    if (targetStack.peek() == heldItem.code) {
-      targetStack.pop()
-      plateInfo.list.push(heldItem.code)
-      if (plateInfo.tilePos == -1) {plateInfo.tilePos = newTileLocation}
-      
-      // check for level being complete
-      if (targetStack.peek() == "stack empty") {
-        changeLevel()
-      }
-      
-      heldItem = false
-      renderIconLayer()
-      renderCursorLayer()
-      
-      return // don't put the icon back where it was!
-    } else {baseLayerFree = false}
+  if (maybeFreeTile == "05") { // moving onto plate tile
+    if (iconLayerFree === true) {
+      // "just passing through!"
+      baseLayerFree = true
+    }
     
   } else {
-    baseLayerFree = (maybeFreeTile == "--")
+    baseLayerFree = (emptyTiles.includes(maybeFreeTile))
   }
-  
-  // check if this tile is free on the ICON layer
-  maybeFreeTile = iconLayer[newTileLocation]
-  var iconLayerFree = (maybeFreeTile == "--")
   
   if (baseLayerFree == true && iconLayerFree == true) {
     // it IS free:
+    
     // put the icon in its new place
     iconLayer[newTileLocation] = heldItem.code
-  } else {
-    // it ISN'T free:
-    // put it back where it came from
-    iconLayer[heldItem.tilePos] = heldItem.code
-  }
-  
-  // reset heldItem (item officially dropped)
-  heldItem = false
+    
+    // clear old one
+    iconLayer[oldTileLocation] = "--"
+    
+    // update heldItem.tilePos
+    heldItem.tilePos = newTileLocation
+    
+    moveCount++
+  } // it ISN'T free: do nothing :3
   
   // re-render both layers affected
   renderIconLayer()
   renderCursorLayer()
-})
+}
 
 
 
@@ -369,7 +357,10 @@ asset key:
 1e-1h - wall bumps 1-4
 02    - crate
 3a-3c - burger parts (bottom to top)
-04    - plate
+4a-?? - ingredients (ordered chronologically from when they were added to the game)
+05    - plate
+98    - shadow
+99    - fork
 */
 
 const levelArrs = {
@@ -378,7 +369,7 @@ const levelArrs = {
     "01","1a","--","--","--","--","--","--","--","--","--","--","--","--","1b","01",
     "01","--","--","--","--","--","--","--","--","--","--","--","--","--","--","01",
     "01","--","--","--","--","--","--","--","--","--","--","--","--","--","--","01",
-    "01","--","--","--","--","--","--","--","--","--","--","--","--","04","--","01",
+    "01","--","--","--","--","--","--","--","--","--","--","--","--","05","--","01",
     "01","--","--","--","--","--","--","--","--","--","--","--","--","--","--","01",
     "01","--","--","--","--","--","--","--","--","--","--","--","--","--","--","01",
     "01","1c","--","--","--","--","--","--","--","--","--","--","--","--","1d","01",
@@ -390,7 +381,7 @@ const levelArrs = {
     "01","--","--","--","01","01","01","1a","1b","01","--","--","--","1f","01","01",
     "01","1c","--","--","--","--","--","--","--","01","--","--","--","--","1b","01",
     "01","01","1g","--","01","01","01","--","--","--","--","--","--","--","--","01",
-    "01","01","1e","--","1f","01","1e","--","--","01","--","--","--","04","--","01",
+    "01","01","1e","--","1f","01","1e","--","--","01","--","--","--","05","--","01",
     "01","1a","--","--","--","--","--","--","--","01","--","--","--","--","--","01",
     "01","1c","--","--","--","--","--","--","1d","01","--","--","--","--","--","01",
     "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01"
@@ -411,7 +402,7 @@ const levelArrs = {
     "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01",
     "01","01","01","1a","--","--","--","--","--","--","--","--","1b","01","01","01",
     "01","01","01","--","--","--","--","--","--","--","--","--","--","01","01","01",
-    "01","01","01","--","--","--","--","--","--","--","--","04","--","01","01","01",
+    "01","01","01","--","--","--","--","--","--","--","--","05","--","01","01","01",
     "01","01","01","--","--","--","--","--","--","--","--","--","--","01","01","01",
     "01","01","01","1c","--","--","--","--","--","--","--","--","1d","01","01","01",
     "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01",
@@ -422,7 +413,7 @@ const levelArrs = {
     "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01",
     "01","01","01","1a","--","1b","01","01","01","01","1a","--","1b","01","01","01",
     "01","01","01","--","--","--","1f","01","01","1e","--","--","--","01","01","01",
-    "01","01","01","--","--","--","--","--","--","--","--","04","--","01","01","01",
+    "01","01","01","--","--","--","--","--","--","--","--","05","--","01","01","01",
     "01","01","01","--","--","--","1h","01","01","1g","--","--","--","01","01","01",
     "01","01","01","1c","--","1d","01","01","01","01","1c","--","1d","01","01","01",
     "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01",
@@ -433,7 +424,7 @@ const levelArrs = {
     "01","1a","--","--","--","--","--","--","--","--","--","--","--","--","1b","01",
     "01","--","1h","01","01","01","01","01","01","01","01","01","01","1g","--","01",
     "01","--","01","01","01","01","--","01","01","01","01","01","01","01","--","01",
-    "01","--","01","01","--","--","--","--","--","--","--","04","01","01","--","01",
+    "01","--","01","01","--","--","--","--","--","--","--","05","01","01","--","01",
     "01","--","01","01","01","01","01","01","01","--","01","01","01","01","--","01",
     "01","--","1f","01","01","01","01","01","01","01","01","01","01","1e","--","01",
     "01","1c","--","--","--","--","--","--","--","--","--","--","--","--","1d","01",
@@ -444,7 +435,7 @@ const levelArrs = {
     "01","1a","--","--","--","--","--","--","--","--","--","--","--","--","1b","01",
     "01","--","1h","01","01","01","01","01","01","01","01","01","01","1g","--","01",
     "01","--","01","01","01","01","--","01","01","01","01","01","01","01","--","01",
-    "01","--","01","01","--","--","--","--","--","--","--","04","01","01","--","01",
+    "01","--","01","01","--","--","--","--","--","--","--","05","01","01","--","01",
     "01","--","01","01","01","01","01","01","01","01","01","01","01","01","--","01",
     "01","--","1f","01","01","01","01","01","01","01","01","01","01","1e","--","01",
     "01","1c","--","--","--","--","--","--","--","--","--","--","--","--","1d","01",
@@ -455,7 +446,7 @@ const levelArrs = {
     "01","1a","--","--","01","1e","--","--","--","--","01","--","--","--","1b","01",
     "01","--","01","--","--","--","--","01","1g","--","--","--","01","01","--","01",
     "01","--","01","01","01","01","1c","--","1b","01","01","01","01","--","--","01",
-    "01","--","01","1a","--","1b","01","01","--","--","01","--","01","04","--","01",
+    "01","--","01","1a","--","1b","01","01","--","--","01","--","01","05","--","01",
     "01","--","01","--","01","--","01","01","01","1g","01","--","01","--","--","01",
     "01","--","01","--","01","--","--","--","--","1f","1e","--","01","--","--","01",
     "01","1c","--","1d","01","1c","1h","01","--","--","--","1d","01","1c","1d","01",
@@ -466,7 +457,7 @@ const levelArrs = {
     "01","1a","--","--","--","--","--","--","--","--","--","--","--","--","1b","01",
     "01","--","1h","01","01","01","01","01","01","01","01","01","01","1g","--","01",
     "01","--","01","01","01","01","01","01","01","01","01","01","01","01","--","01",
-    "01","--","01","01","--","--","--","--","--","--","--","04","01","01","--","01",
+    "01","--","01","01","--","--","--","--","--","--","--","05","01","01","--","01",
     "01","--","01","01","01","01","01","01","01","1g","--","--","01","01","--","01",
     "01","--","1f","01","01","01","01","01","01","01","01","01","01","1e","--","01",
     "01","1c","--","--","--","--","--","--","--","--","--","--","--","--","1d","01",
@@ -474,13 +465,13 @@ const levelArrs = {
   ],
   7: [
     "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01",
-    "01","1a","1b","01","01","01","01","01","01","01","01","01","01","01","--","01",
-    "01","--","1d","01","01","01","01","01","01","01","1a","1b","01","01","--","01",
+    "01","1a","--","01","01","01","01","01","01","01","01","01","01","--","1b","01",
+    "01","--","1h","01","01","01","01","01","01","01","1a","1b","01","1g","--","01",
     "01","--","01","01","01","01","01","01","01","1a","1d","1c","1b","01","--","01",
-    "01","--","01","01","--","--","--","--","--","1d","01","04","1d","01","--","01",
+    "01","--","01","01","--","--","--","--","--","1d","01","05","1d","01","--","01",
     "01","--","01","01","01","01","01","01","01","01","--","1d","01","01","--","01",
     "01","--","1f","01","01","01","01","01","01","01","01","01","01","1e","--","01",
-    "01","1c","--","--","--","--","--","--","--","--","--","--","--","--","1d","01",
+    "01","1c","--","01","01","01","01","01","01","01","01","01","01","--","1d","01",
     "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01"
   ],
   8: [
@@ -490,7 +481,7 @@ const levelArrs = {
     "01","01","--","01","01","01","01","01","--","01","01","01","01","--","01","01",
     "01","01","--","--","--","--","--","--","--","01","--","--","01","--","01","01",
     "01","01","01","01","01","01","--","01","01","01","--","01","01","--","01","01",
-    "01","01","01","--","--","--","--","--","--","--","--","01","04","1d","01","01",
+    "01","01","01","--","--","--","--","--","--","--","--","01","05","1d","01","01",
     "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01",
     "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01"
   ],
@@ -499,7 +490,7 @@ const levelArrs = {
     "01","1a","--","--","--","--","--","--","--","--","--","--","--","--","1b","01",
     "01","--","1h","01","01","01","01","01","01","01","01","01","01","1g","--","01",
     "01","--","01","1a","--","1b","01","01","01","01","01","01","01","01","--","01",
-    "01","--","01","1g","--","--","--","--","--","--","--","04","01","01","--","01",
+    "01","--","01","1g","--","--","--","--","--","--","--","05","01","01","--","01",
     "01","--","01","01","--","1d","01","01","01","01","01","01","01","01","--","01",
     "01","--","1f","01","01","01","01","01","01","01","01","01","01","1e","--","01",
     "01","1c","--","--","--","--","--","--","--","--","--","--","--","--","1d","01",
@@ -510,10 +501,43 @@ const levelArrs = {
     "01","1a","--","--","--","--","--","--","--","--","--","--","--","--","1b","01",
     "01","--","1h","01","01","01","01","01","01","01","01","01","01","1g","--","01",
     "01","--","01","1a","--","1f","01","01","01","01","01","01","01","01","--","01",
-    "01","--","01","1g","--","--","--","--","--","--","--","04","01","01","--","01",
+    "01","--","01","1g","--","--","--","--","--","--","--","05","01","01","--","01",
     "01","--","01","01","--","1d","01","01","01","01","01","01","01","01","--","01",
     "01","--","1f","01","01","01","01","01","01","01","01","01","01","1e","--","01",
     "01","1c","--","--","--","--","--","--","--","--","--","--","--","--","1d","01",
+    "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01"
+  ],
+  11: [
+    "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01",
+    "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01",
+    "01","01","01","01","01","01","1a","--","01","01","01","01","01","01","01","01",
+    "01","01","01","--","1b","01","--","1h","01","01","01","1a","--","--","1b","01",
+    "01","01","01","1g","--","01","--","1f","1e","--","01","--","1h","1g","--","01",
+    "01","--","1f","1e","--","01","1c","--","--","05","01","--","1f","01","01","01",
+    "01","1c","--","--","1d","01","01","01","01","01","01","1c","--","01","01","01",
+    "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01",
+    "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01"
+  ],
+  12: [
+    "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01",
+    "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01",
+    "01","01","01","01","01","01","1a","--","01","01","01","01","01","01","01","01",
+    "01","01","01","--","1b","01","--","1h","01","01","01","1a","--","--","1b","01",
+    "01","01","01","1g","--","--","--","1f","1e","1b","01","--","1h","1g","--","01",
+    "01","--","1f","1e","--","01","1c","--","--","05","01","--","1f","01","01","01",
+    "01","1c","--","--","1d","01","01","01","01","01","01","1c","--","01","01","01",
+    "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01",
+    "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01"
+  ],
+  13: [
+    "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01",
+    "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01",
+    "01","01","01","01","01","01","1a","05","01","01","01","01","01","01","01","01",
+    "01","01","01","1a","1b","01","--","1h","01","01","01","1a","--","--","1b","01",
+    "01","01","01","1g","--","--","--","1f","1e","1b","01","--","1h","1g","--","01",
+    "01","--","1f","1e","--","01","1c","--","--","--","--","--","1f","01","01","01",
+    "01","1c","--","--","1d","01","01","01","01","01","01","1c","--","01","01","01",
+    "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01",
     "01","01","01","01","01","01","01","01","01","01","01","01","01","01","01","01"
   ],
 }
@@ -662,6 +686,39 @@ const iconArrs = {
     "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--",
     "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--"
   ],
+  11: [
+    "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","--","--","3b","3c","--","--","--","--","--","--","--","--",
+    "--","--","--","--","--","--","4a","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","--","--","3a","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--"
+  ],
+  12: [
+    "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","--","--","3a","4a","--","--","--","--","--","--","--","--",
+    "--","--","--","02","--","--","02","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","3b","--","--","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","3c","--","--","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--"
+  ],
+  13: [
+    "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","--","--","--","--","--","--","--","--","--","02","--","--",
+    "--","--","--","--","--","02","--","--","--","--","--","--","--","--","3c","--",
+    "--","3a","--","--","4a","--","--","--","--","--","--","02","--","--","--","--",
+    "--","--","02","--","--","--","--","--","--","--","--","--","3b","--","--","--",
+    "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--",
+    "--","--","--","--","--","--","--","--","--","--","--","--","--","--","--","--"
+  ],
 }
 
 const orderArrs = {
@@ -675,13 +732,77 @@ const orderArrs = {
   7: ["3a","3b","3c"],
   8: ["3a","3b","3c"],
   9: ["3a","3b","3c"],
-  10: ["3a","3b","3c"]
+  10: ["3a","3b","3c"],
+  11: ["3a","3b","4a","3c"],
+  12: ["3a","3b","4a","3c"],
+  13: ["3a","3b","4a","3c"]
 }
+
+const moveCountDict = {
+  1: 23,
+  2: 23,
+  3: 18,
+  4: 32, // 34 is a trap
+  5: 48,
+  6: 14,
+  7: 28,
+  8: 78,
+  9: 37, // 38 is possible
+  10: 57, // 66 is the next realistic count
+  11: 24,
+  12: 36,
+  13: 92, // 98, 110 both very possible
+}
+
+const levelNameDict = {
+  1: "the beginning",
+  2: "variation on a theme",
+  3: "tunnel vision",
+  4: "tunnel precision",
+  5: "a-maze-ing",
+  6: "off to a crate start",
+  7: "make way",
+  8: "outboxed!",
+  9: "bottleneck",
+  10: "package blockage",
+  11: "a gouda-ddition",
+  12: "from A to Brie",
+  13: "the grate finale",
+}
+
+const hintDict = {
+  1: "left click = pick up/drop, wasd/arrow keys = move",
+  2: "press R to restart the level, press M to go back to the menu",
+  7: "square objects cannot fit in curved gaps",
+  11: "cheese counts as a square object"
+}
+
+const factArr = [
+  "The burger was invented by John Burger.",
+  "All burger patties seen in this game are plant-based. Except one.",
+  "No burgers were harmed in the making of this game.",
+  "🍔",
+  "Lettuce know if you find any bugs, so I can squish them before they start eating the game assets.",
+  "(insert cheesy line here)",
+  "I've got a question for you. Which is heavier, a kilogram of patties or a kilogram of buns? That's right, a kilogram of patties… because patties are heavier than buns!",
+  "ts lowk buns 💔",
+  "https://en.wikipedia.org/wiki/Hamburger",
+  "The slugburger is a burger with a deep-fried patty and a plant-based filler ingredient such as potato or cornmeal. It originally cost 5¢, or a nickel (a “slug”).",
+  "The Juicy Lucy is a burger where the cheese is inside the patty rather than on top. When cooked, this results in a molten core of cheese.",
+  "The Luther burger is a burger with glazed doughnuts in place of the usual buns.",
+  "Press M to reload these!"
+]
+
+
 
 var iconLayer = []
 
 function renderBaseLayer() {
   ctx.clearRect(0,0,cwidth,cheight)
+  
+  // prepare for later
+  const partialAssets = ["1a","1b","1c","1d","1e","1f","1g","1h","05"]
+  
   // swap codes out for image srcs
   for (var col = 0; col < GLOBHEIGHT; col++) {
     for (var row = 0; row < GLOBWIDTH; row++) {
@@ -691,7 +812,6 @@ function renderBaseLayer() {
       var img = imageObjects[getSrc(code)]
       
       // draw the floor first, if necessary
-      const partialAssets = ["1a","1b","1c","1d","1e","1f","1g","1h","04"]
       if (partialAssets.includes(code)) {
         var tempImg = imageObjects[getSrc("--")]
         ctx.drawImage(tempImg,row*twidth,col*theight,twidth,theight)
@@ -700,10 +820,49 @@ function renderBaseLayer() {
       ctx.drawImage(img,row*twidth,col*theight,twidth,theight)
     }
   }
+  // gui
+  if (level !== 0) {
+    ctx.fillStyle = "#EEEEEE"
+    ctx.font = `${twidth/2}px Courier New`
+
+    ctx.textAlign = "right"
+    ctx.fillText(`aim: ${moveCountDict[level]}`, twidth*GLOBWIDTH-twidth*0.3, twidth*0.65)
+
+    ctx.textAlign = "center"
+    ctx.fillText(`${level}. ${levelNameDict[level]}`, twidth*GLOBWIDTH/2, twidth*GLOBHEIGHT-theight*0.35)
+
+    if (hintDict[level]) {
+      ctx.fillStyle = "#AAAAAA"
+      ctx.font = `italic ${twidth*0.35}px Courier New`
+      ctx.textAlign = "center"
+      ctx.fillText(hintDict[level], twidth*GLOBWIDTH/2, twidth*(GLOBHEIGHT-1)-theight*0.35)
+    }
+    
+  } else {
+    // gui
+    ctx.fillStyle = "#EEEEEE"
+    ctx.font = `bold ${twidth*0.7}px Courier New`
+    ctx.textAlign = "center"
+    
+    // title
+    ctx.fillText("s o k o b u r g e r", twidth*GLOBWIDTH/2, theight*0.7)
+    
+    // facts!!
+    ctx.font = `${twidth*0.3}px Courier New`
+    var randFact = factArr[Math.floor(Math.random()*(factArr.length))]
+    ctx.fillText(randFact, twidth*GLOBWIDTH/2, twidth*(GLOBHEIGHT)-theight*0.4, twidth*(GLOBWIDTH-1))
+  }
 }
 
 function renderIconLayer() {
   topCtx.clearRect(0,0,cwidth,cheight)
+  
+  // check this for later
+  if (heldItem) {
+    var heldCode = heldItem.code
+    var heldPos = heldItem.tilePos
+  }
+    
   // swap codes out for image srcs
   for (var col = 0; col < GLOBHEIGHT; col++) {
     for (var row = 0; row < GLOBWIDTH; row++) {
@@ -720,12 +879,38 @@ function renderIconLayer() {
         }
       }
       
+      // display shadow under item (if item is held)
+      if (heldPos && col*GLOBWIDTH + row === heldPos) {
+        var xPos = heldPos % GLOBWIDTH
+        var yPos = Math.floor(heldPos/GLOBWIDTH)
+        
+        var shadowImg = imageObjects[getSrc("98")]
+        var iconImg = imageObjects[getSrc(heldCode)]
+        
+        // draw the shadow
+        topCtx.globalAlpha = 0.5
+        topCtx.drawImage(shadowImg,xPos*twidth+twidth*0.2,yPos*theight+theight*0.2,twidth*0.6,theight*0.6)
+        topCtx.globalAlpha = 1
+        
+        // draw the icon at slightly bigger size (floating above the level)
+        topCtx.drawImage(iconImg,xPos*twidth,yPos*theight-theight*0.35,twidth*1,theight*1)
+        
+        continue // no need to render the full-size icon on top!
+      }
+      
       if (code === "--") continue
       
       var img = imageObjects[getSrc(code)]
 
       topCtx.drawImage(img,row*twidth,col*theight,twidth,theight)
     }
+  }
+  // gui
+  if (level !== 0) {
+    topCtx.fillStyle = "#EEEEEE"
+    topCtx.font = `${twidth/2}px Courier New`
+    topCtx.textAlign = "left"
+    topCtx.fillText(`moves: ${moveCount}`, twidth*0.3, twidth*0.65)
   }
 }
 
@@ -739,34 +924,12 @@ function renderCursorLayer() {
     x: mouse.x - wOffset,
     y: mouse.y - hOffset
   }
-  // apply offset to account for walls hit
-  var forkPos = {
-    x: mPos.x - mouse.offset.x,
-    y: mPos.y - mouse.offset.y
-  }
-  
-  // display icon under mouse (if mouse is held)
-  
-  if (heldItem) {
-    code = heldItem.code
-    
-    // get src of icon
-    var img = imageObjects[getSrc(code)]
-    
-    // centre icon instead of putting it at top left
-    var centredPos = {
-      x: forkPos.x - twidth/2,
-      y: forkPos.y - theight/2
-    }
-
-    cursorCtx.drawImage(img,centredPos.x,centredPos.y,twidth,theight)
-  }
   
   // render cursor (on TOP of icon)
   
-  var cursor = imageObjects["images/icons/fork.png"]
+  var cursor = imageObjects[getSrc("99")]
   
-  cursorCtx.drawImage(cursor,forkPos.x,forkPos.y,0.8*theight,0.8*twidth)
+  cursorCtx.drawImage(cursor,mPos.x,mPos.y,0.8*theight,0.8*twidth)
   
   document.body.classList.add("cursorHideClass")
 }
@@ -786,8 +949,25 @@ function menuPrep() {
 }
 
 function changeLevel(l) {
-  if (!levelArrs[level+1]) return
-  level = (l != undefined) ? l : level+1
+  if ((l == undefined && !levelArrs[level+1]) || (l != undefined && (l < 0 || l > 13))) {
+    // identical to pressing 'h', just slightly goofier because its all inside of changeLevel() :P
+    showMenu()
+    level = -1
+    l = undefined
+  }
+  
+  if (level === 0 && l === 1) {
+    // pressed 'm' to go to the next level while on the menu
+    hideMenu()
+    
+  } else if (level === 1 && l === 0) {
+    // pressed 'n' to go back to the menu
+    showMenu()
+  }
+  
+  level = (l !== undefined) ? l : level+1
+  
+  moveCount = 0
   
   var order = orderArrs[level]
   plateInfo = {list: [], tilePos: -1}
@@ -798,6 +978,7 @@ function changeLevel(l) {
     targetStack.push(order[i])
   }
   
+  // take a COPY not the whole thing
   iconLayer = [...iconArrs[level]]
   
   renderBaseLayer()
@@ -813,16 +994,31 @@ function hideMenu() {
 
 function showMenu() {
   const div = document.getElementById("menu")
-  div.style.display = "block"
+  div.style.display = "" // this is what it is initially lol
 }
+
+
 
 function startGame() {
   hideMenu()
   changeLevel()
 }
 
+function levelSelectScreen() {
+  return
+}
+
+function settingsScreen() {
+  return
+}
+
+function quitGame() {
+  return
+}
+
 document.addEventListener('keydown', function(e) {
-  if (e.key === "h") {
+  if (e.key === "m") {
+    heldItem = false
     showMenu()
     changeLevel(0)
   }
@@ -836,8 +1032,27 @@ document.addEventListener('keydown', function(e) {
     }
     
     iconLayer = [...iconArrs[level]]
-    renderIconLayer()
     heldItem = false
+    moveCount = 0
+    renderIconLayer()
     renderCursorLayer()
   }
+  
+  // wasd / arrow keys
+  const movementKeys = ["w","a","s","d","ArrowUp","ArrowLeft","ArrowRight","ArrowDown"]
+  if (movementKeys.includes(e.key)) {
+    if (e.key === "w" || e.key === "ArrowUp") wasdPressed(-GLOBWIDTH)
+    if (e.key === "a" || e.key === "ArrowLeft") wasdPressed(-1)
+    if (e.key === "s" || e.key === "ArrowDown") wasdPressed(GLOBWIDTH)
+    if (e.key === "d" || e.key === "ArrowRight") wasdPressed(1)
+  }
 })
+
+/*
+game = good
+dragging = work
+dragging = george 2
+game = complete
+me = so cool
+project.done = yes
+*/
